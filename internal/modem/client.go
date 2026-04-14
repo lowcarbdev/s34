@@ -3,6 +3,7 @@
 package modem
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -24,6 +25,8 @@ const (
 // Client holds the HTTP client and session state for the modem.
 type Client struct {
 	http       *http.Client
+	tlsCfg     *tls.Config
+	host       string // host:port, derived from baseURL
 	baseURL    string
 	privateKey string // SHA-256 hex uppercase; used as HMAC key for HNAP_AUTH
 	uid        string // session cookie value
@@ -35,12 +38,28 @@ func NewClient(baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	// Derive host:port for raw TLS connections.
+	host := strings.TrimPrefix(baseURL, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	if !strings.Contains(host, ":") {
+		if strings.HasPrefix(baseURL, "https://") {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+
+	tlsCfg := &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
+		baseURL: baseURL,
+		host:    host,
+		tlsCfg:  tlsCfg,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+				TLSClientConfig: tlsCfg,
 			},
 			// Do not follow redirects — unauthenticated requests redirect to
 			// /Login.html; surface that as an error instead.
@@ -61,12 +80,12 @@ func NewClient(baseURL string) *Client {
 //	  Response: {"Challenge":"...", "Cookie":"...", "PublicKey":"...", "LoginResult":"OK"}
 //
 //	Key derivation:
-//	  PrivateKey    = UPPER(SHA-256(PublicKey + Password))
-//	  LoginPassword = UPPER(SHA-256(PrivateKey + Challenge))
+//	  PrivateKey    = UPPER(HMAC-SHA-256(key=PublicKey+Password, msg=Challenge))
+//	  LoginPassword = UPPER(HMAC-SHA-256(key=PrivateKey,         msg=Challenge))
 //
 //	Phase 2 — authenticate:
 //	  Cookie header: uid=<Cookie>; PrivateKey=<PrivateKey>
-//	  HNAP_AUTH header: <HMAC-SHA-256(PrivateKey, timestamp+"<SOAPAction_URI>")_UPPER> <timestamp_ms>
+//	  HNAP_AUTH header: UPPER(HMAC-SHA-256(key=PrivateKey, msg=ts+"<SOAPAction>")) + " " + ts
 //	  POST {"Login":{"Action":"login","Username":...,"LoginPassword":<LoginPassword>,
 //	                 "Captcha":"","PrivateLogin":"LoginPassword"}}
 func (c *Client) Login(username, password string) error {
@@ -149,6 +168,92 @@ func (c *Client) Do(action string, body map[string]any) (map[string]any, error) 
 	}
 	cookieHdr := fmt.Sprintf("uid=%s; PrivateKey=%s", c.uid, c.privateKey)
 	return c.hnapPost(action, body, cookieHdr, c.privateKey)
+}
+
+// DoRaw executes an authenticated HNAP action using a raw TLS connection,
+// bypassing Go's HTTP header parser. This is required for the downstream
+// channel endpoint, which injects channel data into an HTTP header line,
+// producing a response that Go's net/http rejects as malformed.
+func (c *Client) DoRaw(action string, body map[string]any) (map[string]any, error) {
+	if c.privateKey == "" {
+		return nil, fmt.Errorf("not authenticated — call Login first")
+	}
+
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	soapAction := fmt.Sprintf(`"%s%s"`, hnapNS, action)
+	cookieHdr := fmt.Sprintf("uid=%s; PrivateKey=%s", c.uid, c.privateKey)
+	auth := hnapAuth(c.privateKey, soapAction)
+
+	req := fmt.Sprintf(
+		"POST %s HTTP/1.1\r\n"+
+			"Host: %s\r\n"+
+			"SOAPAction: %s\r\n"+
+			"HNAP_AUTH: %s\r\n"+
+			"Cookie: %s\r\n"+
+			"Content-Length: %d\r\n"+
+			"Connection: close\r\n"+
+			"\r\n"+
+			"%s",
+		hnapPath,
+		strings.Split(c.host, ":")[0],
+		soapAction,
+		auth,
+		cookieHdr,
+		len(payload),
+		payload,
+	)
+
+	conn, err := tls.Dial("tcp", c.host, c.tlsCfg)
+	if err != nil {
+		return nil, fmt.Errorf("TLS dial: %w", err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(30 * time.Second)) //nolint:errcheck
+
+	if _, err := io.WriteString(conn, req); err != nil {
+		return nil, fmt.Errorf("write request: %w", err)
+	}
+
+	// Read the raw response, skipping headers line by line until the blank
+	// separator, then collect the body. The modem corrupts one header line
+	// with channel data, so we cannot use net/http to parse this response.
+	br := bufio.NewReader(conn)
+
+	// Read status line
+	statusLine, err := br.ReadString('\n')
+	if err != nil {
+		return nil, fmt.Errorf("read status line: %w", err)
+	}
+	if !strings.Contains(statusLine, "200") {
+		return nil, fmt.Errorf("modem returned non-200: %s", strings.TrimSpace(statusLine))
+	}
+
+	// Skip all header lines until blank line
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			return nil, fmt.Errorf("read headers: %w", err)
+		}
+		if strings.TrimSpace(line) == "" {
+			break
+		}
+	}
+
+	// Read body
+	rawBody, err := io.ReadAll(br)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(rawBody), &result); err != nil {
+		return nil, fmt.Errorf("unexpected modem response: %w (body: %s)", err, rawBody)
+	}
+	return result, nil
 }
 
 // hnapPost sends a POST to /HNAP1/ for the given action.

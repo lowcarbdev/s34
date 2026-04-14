@@ -23,18 +23,6 @@ var statusConnectionCmd = &cobra.Command{
 	RunE:  func(cmd *cobra.Command, args []string) error { return runStatus("connection") },
 }
 
-var statusDownstreamCmd = &cobra.Command{
-	Use:   "downstream",
-	Short: "Downstream channel bonding info",
-	RunE:  func(cmd *cobra.Command, args []string) error { return runStatus("downstream") },
-}
-
-var statusUpstreamCmd = &cobra.Command{
-	Use:   "upstream",
-	Short: "Upstream channel bonding info",
-	RunE:  func(cmd *cobra.Command, args []string) error { return runStatus("upstream") },
-}
-
 var statusStartupCmd = &cobra.Command{
 	Use:   "startup",
 	Short: "Startup sequence / boot status",
@@ -47,14 +35,43 @@ var statusSoftwareCmd = &cobra.Command{
 	RunE:  func(cmd *cobra.Command, args []string) error { return runStatus("software") },
 }
 
-func runStatus(kind string) error {
-	user, pass, err := credentials()
-	if err != nil {
-		return err
-	}
+var statusDownstreamCmd = &cobra.Command{
+	Use:   "downstream",
+	Short: "Downstream channel bonding info",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAuthClient()
+		if err != nil {
+			return err
+		}
+		channels, err := client.StatusDownstream()
+		if err != nil {
+			return err
+		}
+		printDownstream(channels)
+		return nil
+	},
+}
 
-	client := modem.NewClient(flagURL)
-	if err := client.Login(user, pass); err != nil {
+var statusUpstreamCmd = &cobra.Command{
+	Use:   "upstream",
+	Short: "Upstream channel bonding info",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAuthClient()
+		if err != nil {
+			return err
+		}
+		channels, err := client.StatusUpstream()
+		if err != nil {
+			return err
+		}
+		printUpstream(channels)
+		return nil
+	},
+}
+
+func runStatus(kind string) error {
+	client, err := newAuthClient()
+	if err != nil {
 		return err
 	}
 
@@ -62,10 +79,6 @@ func runStatus(kind string) error {
 	switch kind {
 	case "connection":
 		data, err = client.StatusConnection()
-	case "downstream":
-		data, err = client.StatusDownstream()
-	case "upstream":
-		data, err = client.StatusUpstream()
 	case "startup":
 		data, err = client.StatusStartup()
 	case "software":
@@ -76,7 +89,6 @@ func runStatus(kind string) error {
 	if err != nil {
 		return err
 	}
-
 	return printResult(data)
 }
 
@@ -84,13 +96,8 @@ var logCmd = &cobra.Command{
 	Use:   "log",
 	Short: "Show the modem event log",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		user, pass, err := credentials()
+		client, err := newAuthClient()
 		if err != nil {
-			return err
-		}
-
-		client := modem.NewClient(flagURL)
-		if err := client.Login(user, pass); err != nil {
 			return err
 		}
 
@@ -110,8 +117,7 @@ var logCmd = &cobra.Command{
 			return nil
 		}
 
-		// Each entry is separated by "}-{"; fields within an entry by "^".
-		// Field order: index ^ datetime ^ (empty) ^ severity ^ description
+		// Each entry: index^datetime^^severity^description, separated by "}-{"
 		for _, entry := range strings.Split(blob, "}-{") {
 			fields := strings.SplitN(entry, "^", 5)
 			if len(fields) < 5 {
@@ -124,6 +130,41 @@ var logCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+// newAuthClient creates a client and logs in using the global flags/env.
+func newAuthClient() (*modem.Client, error) {
+	user, pass, err := credentials()
+	if err != nil {
+		return nil, err
+	}
+	client := modem.NewClient(flagURL)
+	if err := client.Login(user, pass); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func printDownstream(channels []modem.DownstreamChannel) {
+	fmt.Printf("%-4s  %-8s  %-10s  %-4s  %-12s  %-8s  %-8s  %-10s  %-12s\n",
+		"Ch", "Status", "Modulation", "ID", "Freq (Hz)", "Pwr (dBmV)", "SNR (dB)", "Corrected", "Uncorrected")
+	fmt.Println(strings.Repeat("-", 90))
+	for _, ch := range channels {
+		fmt.Printf("%-4s  %-8s  %-10s  %-4s  %-12s  %-10s  %-8s  %-10s  %-12s\n",
+			ch.Channel, ch.Status, ch.Modulation, ch.ID,
+			ch.FreqHz, ch.PowerDBmV, ch.SNRDB, ch.Corrected, ch.Uncorrected)
+	}
+}
+
+func printUpstream(channels []modem.UpstreamChannel) {
+	fmt.Printf("%-4s  %-8s  %-8s  %-4s  %-14s  %-12s  %-10s\n",
+		"Ch", "Status", "Type", "ID", "Sym Rate (Ksym)", "Freq (Hz)", "Pwr (dBmV)")
+	fmt.Println(strings.Repeat("-", 72))
+	for _, ch := range channels {
+		fmt.Printf("%-4s  %-8s  %-8s  %-4s  %-14s  %-12s  %-10s\n",
+			ch.Channel, ch.Status, ch.Type, ch.ID,
+			ch.SymRateKsym, ch.FreqHz, ch.PowerDBmV)
+	}
 }
 
 func init() {
