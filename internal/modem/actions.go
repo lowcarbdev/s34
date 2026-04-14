@@ -81,15 +81,41 @@ func (c *Client) GetDeviceInfo() (*DeviceInfo, error) {
 
 // Restart reboots the modem. The session must be authenticated first.
 func (c *Client) Restart() error {
-	resp, err := c.Do("SetStatusSecuritySettings", map[string]any{
-		"SetStatusSecuritySettings": map[string]any{
-			"MotoReboot": "reboot",
+	// Step 1: read current configuration so we can echo it back.
+	// The modem requires the current EEE and LED values to be included in the
+	// reboot request — it won't accept a bare reboot action without them.
+	cfg, err := c.Do("GetMultipleHNAPs", map[string]any{
+		"GetMultipleHNAPs": map[string]any{
+			"GetArrisConfigurationInfo": "",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+
+	outer, _ := cfg["GetMultipleHNAPsResponse"].(map[string]any)
+	info, _ := outer["GetArrisConfigurationInfoResponse"].(map[string]any)
+	eee, _ := info["ethSWEthEEE"].(string)
+	led, _ := info["LedStatus"].(string)
+	if eee == "" {
+		eee = "0"
+	}
+	if led == "" {
+		led = "1"
+	}
+
+	// Step 2: send reboot with the current config values echoed back.
+	resp, err := c.Do("SetArrisConfigurationInfo", map[string]any{
+		"SetArrisConfigurationInfo": map[string]any{
+			"Action":       "reboot",
+			"SetEEEEnable": eee,
+			"LED_Status":   led,
 		},
 	})
 	if err != nil {
 		return err
 	}
-	if result := actionResult(resp, "SetStatusSecuritySettings"); result != "OK" {
+	if result := actionResult(resp, "SetArrisConfigurationInfo"); result != "OK" {
 		return fmt.Errorf("restart failed: %s", result)
 	}
 	return nil

@@ -109,6 +109,8 @@ func (c *Client) Login(username, password string) error {
 	switch result, _ := lr["LoginResult"].(string); result {
 	case "LOCKUP":
 		return fmt.Errorf("account locked: too many failed attempts — wait a few minutes and try again")
+	case "RELOAD":
+		return fmt.Errorf("modem is starting up — it is not yet ready to accept commands, try again in a moment")
 	case "OK":
 		// continue
 	default:
