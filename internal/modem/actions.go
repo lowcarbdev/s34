@@ -20,13 +20,13 @@ type DownstreamChannel struct {
 
 // UpstreamChannel holds parsed info for one upstream bonded channel.
 type UpstreamChannel struct {
-	Channel    string
-	Status     string
-	Type       string
-	ID         string
+	Channel     string
+	Status      string
+	Type        string
+	ID          string
 	SymRateKsym string
-	FreqHz     string
-	PowerDBmV  string
+	FreqHz      string
+	PowerDBmV   string
 }
 
 // DeviceInfo holds the consolidated device identity fields from GetMultipleHNAPs.
@@ -46,9 +46,9 @@ type DeviceInfo struct {
 func (c *Client) GetDeviceInfo() (*DeviceInfo, error) {
 	resp, err := c.Do("GetMultipleHNAPs", map[string]any{
 		"GetMultipleHNAPs": map[string]any{
-			"GetInternetConnectionStatus":    "",
-			"GetArrisRegisterInfo":           "",
-			"GetCustomerStatusSoftware":      "",
+			"GetInternetConnectionStatus":     "",
+			"GetArrisRegisterInfo":            "",
+			"GetCustomerStatusSoftware":       "",
 			"GetCustomerStatusConnectionInfo": "",
 		},
 	})
