@@ -128,6 +128,76 @@ Raw HNAP exploration:
 $ s34 hnap GetCustomerStatusSoftware
 ```
 
+## Scheduled restarts with systemd
+
+You can use a systemd service and timer to restart the modem on a schedule. The example below runs at 10:30 AM every Wednesday and Sunday. The time will match your system time. If in UTC, adjust the offset accordingly.
+
+### 1. Store the password
+
+Create a credentials file readable only by root:
+
+```sh
+sudo mkdir -p /etc/s34
+sudo sh -c "echo 'S34_PASSWORD=your-password' > /etc/s34/credentials"
+sudo chmod 600 /etc/s34/credentials
+```
+
+### 2. Create the service unit
+
+`/etc/systemd/system/s34-restart.service`:
+
+```ini
+[Unit]
+Description=Restart ARRIS SURFboard S34 modem
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/s34/credentials
+ExecStart=/usr/local/bin/s34 restart
+```
+
+### 3. Create the timer unit
+
+`/etc/systemd/system/s34-restart.timer`:
+
+```ini
+[Unit]
+Description=Restart S34 modem weekly on Wednesday and Sunday at 3:30 AM Mountain time
+
+[Timer]
+OnCalendar=Wed,Sun 10:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+### 4. Install and enable
+
+Copy the binary, reload systemd, and start the timer:
+
+```sh
+sudo cp s34 /usr/local/bin/s34
+sudo systemctl daemon-reload
+sudo systemctl enable s34-restart.timer
+sudo systemctl start s34-restart.timer
+```
+
+Verify the timer is active and check when it will next fire:
+
+```sh
+systemctl status s34-restart.timer
+systemctl list-timers s34-restart.timer
+```
+
+Check logs from past runs:
+
+```sh
+journalctl -u s34-restart.service
+```
+
 ## Notes
 
 - The modem uses a self-signed TLS certificate issued by an internal ARRIS CA. TLS verification is intentionally skipped.
