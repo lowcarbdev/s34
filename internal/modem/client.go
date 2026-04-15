@@ -22,6 +22,10 @@ const (
 	hnapNS         = "http://purenetworks.com/HNAP1/"
 )
 
+// ErrReload is returned by Login when the modem responds with RELOAD,
+// indicating it is still starting up and the caller should retry.
+var ErrReload = fmt.Errorf("modem is starting up")
+
 // Client holds the HTTP client and session state for the modem.
 type Client struct {
 	http       *http.Client
@@ -110,7 +114,7 @@ func (c *Client) Login(username, password string) error {
 	case "LOCKUP":
 		return fmt.Errorf("account locked: too many failed attempts — wait a few minutes and try again")
 	case "RELOAD":
-		return fmt.Errorf("modem is starting up — it is not yet ready to accept commands, try again in a moment")
+		return ErrReload
 	case "OK":
 		// continue
 	default:

@@ -202,7 +202,7 @@ journalctl -u s34-restart.service
 
 - The modem uses a self-signed TLS certificate issued by an internal ARRIS CA. TLS verification is intentionally skipped.
 - The modem locks out login attempts after a small number of failures. If you see `account locked`, wait a few minutes before retrying.
-- During startup after a restart, the modem returns `RELOAD` before it is ready to accept commands. If you see `modem is starting up`, wait a moment and retry.
+- During startup after a restart, the modem returns `RELOAD` before it is ready to accept commands. The `restart` command retries automatically for up to 5 minutes.
 - The downstream channel endpoint has a firmware bug where channel data is injected into an HTTP response header, causing standard HTTP clients to reject the response. This tool works around it by using a raw TLS connection for that endpoint.
 
 ## License

@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/lowcarbdev/s34/internal/modem"
 	"github.com/spf13/cobra"
@@ -18,20 +20,28 @@ var restartCmd = &cobra.Command{
 			return err
 		}
 
-		client := modem.NewClient(flagURL)
+		deadline := time.Now().Add(5 * time.Minute)
+		for {
+			client := modem.NewClient(flagURL)
 
-		fmt.Fprintf(os.Stderr, "Logging in as %s...\n", user)
-		if err := client.Login(user, pass); err != nil {
-			return err
+			fmt.Fprintf(os.Stderr, "Logging in as %s...\n", user)
+			if err := client.Login(user, pass); err != nil {
+				if errors.Is(err, modem.ErrReload) && time.Now().Before(deadline) {
+					fmt.Fprintln(os.Stderr, "Modem is starting up, retrying in 10s...")
+					time.Sleep(10 * time.Second)
+					continue
+				}
+				return err
+			}
+
+			fmt.Fprintln(os.Stderr, "Sending restart command...")
+			if err := client.Restart(); err != nil {
+				return err
+			}
+
+			fmt.Println("Modem is restarting. It will be unreachable for approximately 2 minutes.")
+			return nil
 		}
-
-		fmt.Fprintln(os.Stderr, "Sending restart command...")
-		if err := client.Restart(); err != nil {
-			return err
-		}
-
-		fmt.Println("Modem is restarting. It will be unreachable for approximately 2 minutes.")
-		return nil
 	},
 }
 
