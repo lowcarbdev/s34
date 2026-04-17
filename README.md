@@ -164,7 +164,7 @@ ExecStart=/usr/local/bin/s34 restart
 
 ```ini
 [Unit]
-Description=Restart S34 modem weekly on Wednesday and Sunday at 3:30 AM Mountain time
+Description=Restart S34 modem weekly on Wednesday and Sunday at 3:30 AM system time
 
 [Timer]
 OnCalendar=Wed,Sun 10:30:00
