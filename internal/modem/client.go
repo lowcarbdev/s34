@@ -95,7 +95,10 @@ func NewClient(baseURL string) *Client {
 func (c *Client) Login(username, password string) error {
 	// A plain GET to the base URL is required to wake the modem's API before
 	// HNAP requests will succeed; ignore errors (redirect/TLS is expected).
-	c.http.Get(c.baseURL) //nolint:errcheck
+	_, err := c.http.Get(c.baseURL) //nolint:errcheck
+	if err != nil {
+		return fmt.Errorf("initial GET to wake modem: %w", err)
+	}
 
 	// Phase 1: request challenge
 	phase1, err := c.hnapPost("Login", map[string]any{
